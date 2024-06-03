@@ -272,7 +272,7 @@ def feature_extraction(feature, sample_rate, n_fft, hop_length, dict_hives, hive
 
             try:
 
-                signal_audio, sample_rate = librosa.load(os.path.join("../data/Nectar/full_" + str(year), file_names[i]), 
+                signal_audio, sample_rate = librosa.load(os.path.join("../data/audio/beehives_" + str(year), file_names[i]), 
                                                          sr=sample_rate)
                 
                 print("-------------- ------------// File {} //------------- -------".format(file_names[i]))
