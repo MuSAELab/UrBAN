@@ -10,4 +10,4 @@ There are two notebooks in this repository.
 2. [data_description_plots_2021_2022.ipynb](code/data_description_plots_2021_2022.ipynb)
 
 
-Details and code related to how feture extraction and selection could be used on the audio dataset is described in [main.ipynb](code/main.ipynb).
+Details and code related to how feture extraction and regression could be used on the audio dataset is described in [main.ipynb](code/main.ipynb), while [data_description_plots_2021_2022.ipynb](code/data_description_plots_2021_2022.ipynb) contains codes related to how plot and visualize the datsets.
