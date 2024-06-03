@@ -1,1 +1,1 @@
-Audio data needs to downloaded. Details will be posted.
+Audio data needs to be downloaded from elsewehre. Details will be posted.
