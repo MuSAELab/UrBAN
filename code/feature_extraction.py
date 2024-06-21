@@ -6,6 +6,7 @@ import librosa
 import scipy.fftpack
 from librosa import util
 from librosa.util.exceptions import ParameterError
+from spectral_subtraction import spectral_subtraction
 
 def data_ls_to_string(ls, hive):
     file_names = []
