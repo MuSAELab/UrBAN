@@ -674,7 +674,9 @@ def independent_split_evaluation(feature_data, feature, initial_train_hives, ini
         print("-"*40)
         print(f"Test hives: {test_hives}")
         print("="*40)
-                
+
+        x_train, y_train, x_val, y_val, x_test, y_test = get_splits(feature_data, train_hives, val_hives, test_hives)
+        
         method, num_features = select_best_feature_selection_method(
             feature, feature_data, x_train, x_val, y_train, y_val, 
             methods=['importance', 'pca', 'mrmr', 'shap'], model=model, predefined_split=True, refit=True)
