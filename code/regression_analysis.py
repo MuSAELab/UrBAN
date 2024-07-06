@@ -19,6 +19,8 @@ from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_absolute_error, mean_squared_error, make_scorer
 import shap
 
+from scipy.stats import ttest_rel
+
 def get_splits(feature_data, train_hives, val_hives, test_hives):
     """
     Split the feature data into train, validation, and test sets based on the given hive tags.
