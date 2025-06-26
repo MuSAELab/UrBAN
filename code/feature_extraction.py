@@ -1,12 +1,11 @@
+
 import numpy as np
 import pandas as pd
-import os
 
 import librosa
 import scipy.fftpack
 from librosa import util
 from librosa.util.exceptions import ParameterError
-from spectral_subtraction import spectral_subtraction
 
 def data_ls_to_string(ls, hive):
     file_names = []
@@ -274,7 +273,7 @@ def feature_extraction(feature, sample_rate, n_fft, hop_length, dict_hives, hive
 
             try:
 
-                signal_audio, sample_rate = librosa.load(os.path.join("../data/audio/beehives_" + str(year), file_names[i]), 
+                signal_audio, sample_rate = librosa.load(os.path.join("../data/Nectar/full_" + str(year), file_names[i]), 
                                                          sr=sample_rate)
                 
                 print("-------------- ------------// File {} //------------- -------".format(file_names[i]))
@@ -463,4 +462,5 @@ def extract_statistic(df_all, f_columns, year, start, stop):
     df_features.iloc[:, :4*len(f_columns)] = df_features.iloc[:, :4*len(f_columns)].astype('f') 
 
     return df_features
+
 
