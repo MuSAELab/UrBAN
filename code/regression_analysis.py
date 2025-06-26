@@ -1,14 +1,12 @@
 import numpy as np
 from scipy.stats import pearsonr
 from sklearn.preprocessing import MinMaxScaler
-
-
 import depmeas #use from github
 import feature_select # use from github
-
+from feature_select import feature_select_optimized
 
 from sklearn.model_selection import train_test_split
-from sklearn.model_selection import GridSearchCV, PredefinedSplit
+from sklearn.model_selection import LeaveOneGroupOut, KFold, GridSearchCV, PredefinedSplit, GroupKFold, RandomizedSearchCV
 from sklearn.svm import SVR
 from sklearn.linear_model import Lasso, Ridge
 from sklearn.neighbors import KNeighborsRegressor
@@ -16,694 +14,67 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.metrics import mean_absolute_error, mean_squared_error, make_scorer
+from sklearn.metrics import mean_absolute_error, mean_squared_error, make_scorer, r2_score
+from scipy.stats import ttest_rel, wilcoxon
+import random
+import tensorflow as tf
+import os
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+
 import shap
 
-from scipy.stats import ttest_rel
+def set_seed(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    tf.random.set_seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    
+def create_random_feature(dataset, seed=0, min_fob=1, max_fob=30):
+    set_seed(seed=seed)
+    dataset = dataset.copy()
+    dataset['fob'] = np.random.uniform(min_fob, max_fob + 1e-10, len(dataset))
+    dataset['fob'] = np.clip(dataset['fob'], min_fob, max_fob)
+  
+    return dataset
 
-def get_splits(feature_data, train_hives, val_hives, test_hives):
+
+def create_random_array(array, seed=0, min_fob=1, max_fob=30):
+    set_seed(seed=seed)
+
+    random_array = np.random.uniform(min_fob, max_fob + 1e-10, len(array))
+    random_array = np.clip(random_array, min_fob, max_fob)
+  
+    return random_array
+
+
+def clip_based_on_boxes(y_true, y_pred):
     """
-    Split the feature data into train, validation, and test sets based on the given hive tags.
+    Calculate the correlation coefficient considering box constraints.
 
     Args:
-    - feature_data (DataFrame): DataFrame containing the feature data.
-    - train_hives (list): List of hive tags for the training set.
-    - val_hives (list): List of hive tags for the validation set.
-    - test_hives (list): List of hive tags for the test set.
+    - y_true (ndarray): True target labels.
+    - y_pred (ndarray): Predicted target labels.
 
     Returns:
-    - x_train (ndarray): Feature data for the training set.
-    - y_train (ndarray): Target labels for the training set.
-    - x_val (ndarray): Feature data for the validation set.
-    - y_val (ndarray): Target labels for the validation set.
-    - x_test (ndarray): Feature data for the test set.
-    - y_test (ndarray): Target labels for the test set.
+    - r2_box (float): R squared.
     """
     
+    #y_true = y_true.astype(int)
+    temp = []
     
-    x_train = feature_data[feature_data['tag'].isin(train_hives)].iloc[:, :-5].values
-    y_train = feature_data[feature_data['tag'].isin(train_hives)].iloc[:, -1].values
-
-    x_val = feature_data[feature_data['tag'].isin(val_hives)].iloc[:, :-5].values
-    y_val = feature_data[feature_data['tag'].isin(val_hives)].iloc[:, -1].values
-
-    x_test = feature_data[feature_data['tag'].isin(test_hives)].iloc[:, :-5].values
-    y_test = feature_data[feature_data['tag'].isin(test_hives)].iloc[:, -1].values
-    
-    return x_train, y_train, x_val, y_val, x_test, y_test
-
-
-
-
-def ml_gridsearchcv(model, predefined_split=False, split_index=[], refit=False):
-    
-    """
-    Perform grid search cross-validation to tune hyperparameters of a machine learning model.
-
-    Parameters:
-    - model (str): Name of the machine learning model.
-    - predefined_split (bool): Whether to use predefined splits for cross-validation.
-    - split_index (list): List of indices indicating the fold to which each sample belongs if predefined_split is True.
-    - refit (bool): Whether to refit the best estimator using all available data.
-
-    Returns:
-    - GridSearchCV: Grid search cross-validation object.
-
-    This function performs grid search cross-validation to tune hyperparameters of a specified machine learning model. It supports various models including Support Vector Regression (SVR), Lasso, Ridge, K-Nearest Neighbors (KNN), Random Forest, and Decision Tree. The grid of hyperparameters to search over is predefined for each model. If predefined_split is True, the function uses predefined splits for cross-validation, otherwise, it uses standard k-fold cross-validation.
-
-    """
-
-    score = mae_box_scorer #'neg_mean_absolute_error' # mae_box_scorer #'r2' #'neg_mean_absolute_error' #neg_mean_squared_error'
-    
-    if model == 'svr':
-        param_grid = {'C': [0.1, 1, 10], 
-              'gamma': [1, 0.1, 10],
-              'kernel': ['rbf','linear']}
-        if predefined_split:
-            grid = GridSearchCV(SVR(), param_grid, refit=refit, verbose=0, scoring=score,
-                                cv=PredefinedSplit(test_fold=split_index))
-        else:              
-            grid = GridSearchCV(SVR(), param_grid, refit=refit, verbose=0, scoring=score)
-        
-    elif model == 'lasso':
-        param_grid = {'alpha': np.logspace(-4, -0.5, 30)} 
-        if predefined_split:
-            grid = GridSearchCV(Lasso(random_state=0, max_iter=10000), param_grid, refit=refit, verbose=0,
-                                scoring=score, cv=PredefinedSplit(test_fold=split_index))
-        else:
-            grid = GridSearchCV(Lasso(random_state=0, max_iter=10000), param_grid, refit=refit, verbose=0, scoring=score)
-        
-    elif model == 'ridge':
-        param_grid = {'alpha': np.logspace(-4, -0.5, 30)} 
-        if predefined_split:
-            grid = GridSearchCV(Ridge(random_state=0, max_iter=10000), param_grid, refit=refit, verbose=0,
-                                scoring=score, cv=PredefinedSplit(test_fold=split_index))
-        else:
-            grid = GridSearchCV(Ridge(random_state=0, max_iter=10000), param_grid, refit=refit, verbose=0, scoring=score)
-        
-    elif model == 'knn':
-        param_grid = {'n_neighbors': np.arange(1, 10)} 
-        if predefined_split:
-            grid = GridSearchCV(KNeighborsRegressor(), param_grid, refit=refit, verbose=0, scoring=score,
-                                cv=PredefinedSplit(test_fold=split_index))
-        else:
-            grid = GridSearchCV(KNeighborsRegressor(), param_grid, refit=refit, verbose=0, scoring=score)
-        
-    elif model == 'random forest':
-        param_grid = {'n_estimators': np.arange(100, 200, 50),
-               'max_features': ['auto', 'sqrt'],
-               'max_depth': np.arange(10, 30, 10),
-               'min_samples_split': [2, 5, 10],
-               'min_samples_leaf': [1, 2, 4],
-               'bootstrap': [True, False]}
-        if predefined_split:
-            grid = GridSearchCV(RandomForestRegressor(random_state=0), param_grid, refit=refit, verbose=0, 
-                               scoring=score, cv=PredefinedSplit(test_fold=split_index))
-        else:
-            grid = GridSearchCV(RandomForestRegressor(random_state=0), param_grid, refit=refit, verbose=0, scoring=score)
-        
-    elif model == 'tree':
-        param_grid = {"min_samples_split": [2, 5, 10],
-                       "min_samples_leaf": [1, 2, 4]
-                     }
-        if predefined_split:
-            grid = GridSearchCV(DecisionTreeRegressor(random_state=1), param_grid, refit=refit, verbose=0,
-                            scoring=score, cv=PredefinedSplit(test_fold=split_index))
-        else:
-            grid = GridSearchCV(DecisionTreeRegressor(random_state=1), param_grid, refit=refit, verbose=0, scoring=score)
-        
-    return grid
-
-
-def feature_selection(feature_data,
-                      x_train, x_val,
-                      y_train, y_val,
-                      method, model='random forest',
-                      predefined_split=False, 
-                      refit=True):
-    """
-    Perform feature selection based on the specified method.
-
-    Parameters:
-    - feature_data (pd.DataFrame): DataFrame containing the feature data.
-    - x_train (np.ndarray): Training feature data.
-    - x_val (np.ndarray): Validation feature data.
-    - y_train (np.ndarray): Training target data.
-    - y_val (np.ndarray): Validation target data.
-    - method (str): Feature selection method to use ('importance', 'pca', 'mrmr', 'shap').
-    - model (str): Model to use for feature selection ('random forest' by default).
-    - predefined_split (bool): Indicates whether to use a predefined split for cross-validation (default False).
-    - refit (bool): Indicates whether to refit the model after feature selection (default True).
-
-    Returns:
-    - tuple: Validation metrics (val_mae, val_rmse, val_corr).
-    """
-    
-
-    val_mae = []
-    val_rmse = []
-    val_corr = []
-
-    if method == 'importance':
-        
-        model = RandomForestRegressor(random_state = 0)
-        model.fit(x_train, y_train)
-        importance = model.feature_importances_
-        
-        for i in range(1, len(importance)+1)[:10]:
+    for i in range(len(y_true)):
+        if 0 < y_true[i] <= 10:
+            y_box = 1
+        elif 10 < y_true[i] <= 20:
+            y_box = 2
+        elif 20 < y_true[i] <= 30:
+            y_box = 3
             
-            print(feature_data.iloc[:, :-5].columns[importance.argsort()[-i:][::-1]])
+        temp.append(np.clip(y_pred[i], 10 * y_box - 10, 10 * y_box))
 
-            x_train_i = x_train[:, importance.argsort()[-i:][::-1]]
-            x_val_i = x_val[:, importance.argsort()[-i:][::-1]]
-
-            x_train_val_i = np.concatenate([x_train_i, x_val_i], axis = 0)
-            y_train_val = np.concatenate([y_train, y_val], axis = 0)
-            
-            
-            split_index = []
-            
-            if predefined_split:
-                
-                for i in range(len(x_train_i)):
-                    split_index.append(-1)
-                for i in range(len(x_val_i)):
-                    split_index.append(0)
-                            
-                grid = ml_gridsearchcv('random forest',
-                                       predefined_split = predefined_split,
-                                       split_index = split_index, 
-                                       refit=refit
-                                      )
-                
-                grid.fit(x_train_val_i, y_train_val)
-
-                model = RandomForestRegressor(random_state = 0, **grid.best_params_)
-                model.fit(x_train_i, y_train)
-                
-            else:
-                
-                model = ml_gridsearchcv('random forest',
-                                        predefined_split = predefined_split,
-                                        split_index = split_index, 
-                                         refit=refit
-                                       )
-                model.fit(x_train_i, y_train)
-
-
-            val_mae.append(score_mae_box(y_val, model.predict(x_val_i)))
-            val_rmse.append(score_rmse_box(y_val, model.predict(x_val_i)))
-            val_corr.append(score_corr_box(y_val, model.predict(x_val_i)))
-
-        
-    elif method == 'pca':
-        
-        for i in range(1, min(x_val.shape[0], x_val.shape[1]) +1)[:10]:
-            
-            
-            
-            pca_features = PCA(n_components=i, random_state=0)
-            x_train_i = pca_features.fit_transform(x_train)
-            x_val_i = pca_features.fit_transform(x_val)
-            
-            print('Explained variation per principal component: {}'.format(pca_features.explained_variance_ratio_))
-
-
-            min_max_scaler = MinMaxScaler()
-            x_train_i = min_max_scaler.fit_transform(x_train_i)
-            x_val_i = min_max_scaler.fit_transform(x_val_i)
-
-            x_train_val_i = np.concatenate([x_train_i, x_val_i], axis = 0)
-            y_train_val = np.concatenate([y_train, y_val], axis = 0)
-            
-            split_index = []
-            if predefined_split:
-                
-                for i in range(len(x_train_i)):
-                    split_index.append(-1)
-                for i in range(len(x_val_i)):
-                    split_index.append(0)
-                            
-                grid = ml_gridsearchcv('random forest',
-                                       predefined_split = predefined_split,
-                                       split_index = split_index, 
-                                       refit=refit
-                                      )
-                
-                grid.fit(x_train_val_i, y_train_val)
-
-                model = RandomForestRegressor(random_state = 0, **grid.best_params_)
-                model.fit(x_train_i, y_train)
-                
-            else:
-                
-                model = ml_gridsearchcv('random forest',
-                                        predefined_split = predefined_split,
-                                        split_index = split_index, 
-                                         refit=refit
-                                       )
-                model.fit(x_train_i, y_train)
-
-
-            val_mae.append(score_mae_box(y_val, model.predict(x_val_i)))
-            val_rmse.append(score_rmse_box(y_val, model.predict(x_val_i)))
-            val_corr.append(score_corr_box(y_val, model.predict(x_val_i)))
-        
-    elif method == 'mrmr':
-        
-        num_features_to_select = len(feature_data.iloc[:, :-5].columns)
-        K_MAX = 1000
-        estimator = depmeas.mi_tau
-        n_jobs = -1
-        feature_ranking_idxs = feature_select.feature_select(x_train,y_train,
-            num_features_to_select=num_features_to_select,K_MAX=K_MAX,
-            estimator=estimator,n_jobs=n_jobs)
-
-        num_selected_features = len(feature_ranking_idxs)
-
-        for i in range(num_selected_features)[:10]:
-
-            x_train_i = x_train[:,feature_ranking_idxs[0:i+1]]
-            x_val_i = x_val[:,feature_ranking_idxs[0:i+1]]
-
-
-            x_train_val_i = np.concatenate([x_train_i, x_val_i], axis = 0)
-            y_train_val = np.concatenate([y_train, y_val], axis = 0)
-            
-            split_index = []
-            split_index = []
-            if predefined_split:
-                
-                for i in range(len(x_train_i)):
-                    split_index.append(-1)
-                for i in range(len(x_val_i)):
-                    split_index.append(0)
-                            
-                grid = ml_gridsearchcv('random forest',
-                                       predefined_split = predefined_split,
-                                       split_index = split_index, 
-                                       refit=refit
-                                      )
-                
-                grid.fit(x_train_val_i, y_train_val)
-
-                model = RandomForestRegressor(random_state = 0, **grid.best_params_)
-                model.fit(x_train_i, y_train)
-                
-            else:
-                
-                model = ml_gridsearchcv('random forest',
-                                        predefined_split = predefined_split,
-                                        split_index = split_index, 
-                                         refit=refit
-                                       )
-                model.fit(x_train_i, y_train)
-
-
-            val_mae.append(score_mae_box(y_val, model.predict(x_val_i)))
-            val_rmse.append(score_rmse_box(y_val, model.predict(x_val_i)))
-            val_corr.append(score_corr_box(y_val, model.predict(x_val_i)))
-        
-        
-    elif method == 'shap':
-        
-        X100 = shap.utils.sample(x_train.astype(float), 100)  # 100 instances for use as the background distribution
-        grid = ml_gridsearchcv('random forest', refit=True)
-        grid.fit(x_train.astype(float), y_train)
-        explainer = shap.Explainer(grid.predict, X100, feature_names=feature_data.iloc[:, :-5].columns)
-        shap_values = explainer(x_train.astype(float))#, max_evals=6401
-        
-        vals= np.abs(shap_values.values).mean(0)
-                    
-        for i in range(1, len(vals)+1)[:10]:
-    
-            print(feature_data.iloc[:, :-5].columns[vals.argsort()[-i:][::-1]])
-
-            x_train_i = x_train[:, vals.argsort()[-i:][::-1]]
-
-            x_val_i = x_val[:, vals.argsort()[-i:][::-1]]
-
-            x_train_val_i = np.concatenate([x_train_i, x_val_i], axis = 0)
-            y_train_val = np.concatenate([y_train, y_val], axis = 0)
-            
-            split_index = []
-            if predefined_split:
-                
-                for i in range(len(x_train_i)):
-                    split_index.append(-1)
-                for i in range(len(x_val_i)):
-                    split_index.append(0)
-                            
-                grid = ml_gridsearchcv('random forest',
-                                       predefined_split = predefined_split,
-                                       split_index = split_index, 
-                                       refit=refit
-                                      )
-                
-                grid.fit(x_train_val_i, y_train_val)
-
-                model = RandomForestRegressor(random_state = 0, **grid.best_params_)
-                model.fit(x_train_i, y_train)
-                
-            else:
-                
-                model = ml_gridsearchcv('random forest',
-                                        predefined_split = predefined_split,
-                                        split_index = split_index, 
-                                         refit=refit
-                                       )
-                model.fit(x_train_i, y_train)
-
-
-            val_mae.append(score_mae_box(y_val, model.predict(x_val_i)))
-            val_rmse.append(score_rmse_box(y_val, model.predict(x_val_i)))
-            val_corr.append(score_corr_box(y_val, model.predict(x_val_i)))
-
-    return val_mae, val_rmse, val_corr
-
-
-
-
-def select_best_feature_selection_method(feature, feature_data, x_train, x_val, y_train, y_val, methods=['importance', 'pca', 'mrmr', 'shap'], model='random forest', predefined_split=False, refit=True):
-    """
-    Select the best feature selection method based on evaluation metrics.
-
-    Parameters:
-    - feature (str): Name of the feature or dimension.
-    - feature_data (pd.DataFrame): DataFrame containing feature data.
-    - x_train (np.ndarray): Training input features.
-    - x_val (np.ndarray): Validation input features.
-    - y_train (np.ndarray): Training target values.
-    - y_val (np.ndarray): Validation target values.
-    - methods (list): List of feature selection methods to evaluate.
-    - model (str): Machine learning model to use for evaluation (default is 'random forest').
-    - predefined_split (bool): Whether to use predefined splits for cross-validation (default is False).
-    - refit (bool): Whether to refit the model after selecting features (default is True).
-
-    Returns:
-    - str: Best feature selection method.
-    - int: Number of features selected by the best method.
-    """
-    split = 'rndm'
-    if predefined_split:
-        split = 'indpnt'        
-
-    best_method = None
-    best_num_features = None
-    best_score = float('inf')
-
-    results = {}
-    scaler = MinMaxScaler()
-
-    for method in methods:
-        val_mae, val_rmse, val_corr = feature_selection(feature_data, x_train, x_val, y_train, y_val, method, model, predefined_split, refit)
-
-        # Convert correlation to negative correlation to minimize it
-        val_corr = [-corr for corr in val_corr]
-
-        # Normalize the scores
-        mae_norm = scaler.fit_transform(np.array(val_mae).reshape(-1, 1)).flatten()
-        rmse_norm = scaler.fit_transform(np.array(val_rmse).reshape(-1, 1)).flatten()
-        corr_norm = scaler.fit_transform(np.array(val_corr).reshape(-1, 1)).flatten()
-
-        # Aggregate the normalized scores
-        aggregate_score = mae_norm + rmse_norm + corr_norm
-
-        # Find the best number of features for the current method
-        best_index = np.argmin(aggregate_score)
-        results[method] = {
-            'num_features': best_index + 1,
-            'mae': val_mae[best_index],
-            'rmse': val_rmse[best_index],
-            'corr': val_corr[best_index]
-        }
-
-        if aggregate_score[best_index] < best_score:
-            best_score = aggregate_score[best_index]
-            best_method = method
-            best_num_features = best_index + 1
-
-    print(f'Best Method: {best_method}')
-    print(f'Number of Features: {best_num_features}')
-    
-    return best_method, best_num_features
-
-
-
-
-
-def performance_on_selected_features(feature_data, x_train, x_val, x_test,  y_train, y_val, y_test, method, num_features, 
-                                     model='random forest', predefined_split=False, refit=True):
-    
-    """
-    Evaluate the performance of a machine learning model using selected features.
-
-    Parameters:
-    - feature_data (DataFrame): DataFrame containing feature data.
-    - x_train (array-like): Input features for training.
-    - x_val (array-like): Input features for validation.
-    - x_test (array-like): Input features for testing.
-    - y_train (array-like): Target labels for training.
-    - y_val (array-like): Target labels for validation.
-    - y_test (array-like): Target labels for testing.
-    - method (str): Feature selection method ('importance', 'pca', 'mrmr', 'shap').
-    - num_features (int): Number of selected features.
-    - model (str, optional): Machine learning model to use. Defaults to 'random forest'.
-    - predefined_split (bool, optional): Whether to use predefined splits for cross-validation. Defaults to False.
-    - refit (bool, optional): Whether to refit the model after feature selection. Defaults to True.
-
-    Returns:
-    - tuple: Mean absolute error (MAE), root mean squared error (RMSE), Pearson correlation coefficient, and predictions.
-    """
-        
-    
-    i = num_features
-
-    if method == 'importance':
-        
-        model = RandomForestRegressor(random_state = 0)
-        model.fit(x_train, y_train)
-        importance = model.feature_importances_
-        
-
-        x_train_i = x_train[:, importance.argsort()[-i:][::-1]]
-        x_test_i = x_test[:, importance.argsort()[-i:][::-1]]
-        x_val_i = x_val[:, importance.argsort()[-i:][::-1]]
-
-        x_train_val_i = np.concatenate([x_train_i, x_val_i], axis = 0)
-        y_train_val = np.concatenate([y_train, y_val], axis = 0)
-
-        
-    elif method == 'pca':
-        
-            
-        pca_features = PCA(n_components=i, random_state=0)
-        x_train_i = pca_features.fit_transform(x_train)
-        x_val_i = pca_features.fit_transform(x_val)
-        x_test_i = pca_features.fit_transform(x_test)
-
-        min_max_scaler = MinMaxScaler()
-        x_train_i = min_max_scaler.fit_transform(x_train_i)
-        x_val_i = min_max_scaler.fit_transform(x_val_i)
-        x_test_i = min_max_scaler.fit_transform(x_test_i)
-
-        x_train_val_i = np.concatenate([x_train_i, x_val_i], axis = 0)
-        y_train_val = np.concatenate([y_train, y_val], axis = 0)
-
-
-    elif method == 'mrmr':
-        
-        num_features_to_select = len(feature_data.iloc[:, :-5].columns)
-        K_MAX = 1000
-        estimator = depmeas.mi_tau
-        n_jobs = -1
-        feature_ranking_idxs = feature_select.feature_select(x_train,y_train,
-            num_features_to_select=num_features_to_select,K_MAX=K_MAX,
-            estimator=estimator,n_jobs=n_jobs)
-
-        num_selected_features = len(feature_ranking_idxs)
-
-
-        x_train_i = x_train[:,feature_ranking_idxs[0:i]]
-        x_test_i = x_test[:,feature_ranking_idxs[0:i]]
-        x_val_i = x_val[:,feature_ranking_idxs[0:i]]
-
-
-        x_train_val_i = np.concatenate([x_train_i, x_val_i], axis = 0)
-        y_train_val = np.concatenate([y_train, y_val], axis = 0)
-
-
-    elif method == 'shap':
-        
-        X100 = shap.utils.sample(x_train.astype(float), 100)  # 100 instances for use as the background distribution
-        grid = ml_gridsearchcv('random forest', refit=True)
-        grid.fit(x_train.astype(float), y_train)
-        explainer = shap.Explainer(grid.predict, X100, feature_names=feature_data.iloc[:, :-5].columns)
-        shap_values = explainer(x_train.astype(float))#, max_evals=6401
-        
-        vals= np.abs(shap_values.values).mean(0)    
-                        
-        x_train_i = x_train[:, vals.argsort()[-i:][::-1]]
-        x_val_i = x_val[:, vals.argsort()[-i:][::-1]]
-        x_test_i = x_test[:, vals.argsort()[-i:][::-1]]
-
-        x_train_val_i = np.concatenate([x_train_i, x_val_i], axis = 0)
-        y_train_val = np.concatenate([y_train, y_val], axis = 0)
-        
-        
-    split_index = []
-            
-    if predefined_split:
-
-        for i in range(len(x_train_i)):
-            split_index.append(-1)
-        for i in range(len(x_val_i)):
-            split_index.append(0)
-            
-    grid = ml_gridsearchcv('random forest', predefined_split = predefined_split, split_index = split_index, refit=refit)
-    grid.fit(x_train_val_i, y_train_val)
-
-    predictions = grid.predict(x_test_i)
-    mae = score_mae_box(y_test, grid.predict(x_test_i))
-    rmse = score_rmse_box(y_test, grid.predict(x_test_i))
-    corr = score_corr_box(y_test, grid.predict(x_test_i))
-    
-    print('MAE: ', mae)
-    print('RMSE: ', rmse)
-    print('Correlation: ', corr)
-
-    return mae, rmse, corr, predictions
-
-
-
-def random_split_evaluation(feature_data, feature, n_iterations=10, model='random forest'):
-    """
-    Evaluate the performance of a model using random splits of the dataset.
-
-    Parameters:
-    - feature_data (DataFrame): DataFrame containing the feature data.
-    - feature (str): Name of the feature being evaluated.
-    - n_iterations (int): Number of iterations for random splits.
-    - model (str): Name of the machine learning model to use.
-
-    Returns:
-    - Tuple: A tuple containing the model predictions and true labels for each iteration.
-
-    This function performs a random split of the dataset into training, validation, and test sets. It then selects the best feature selection method and evaluates the performance of the selected features using the specified machine learning model. This process is repeated for the specified number of iterations.
-
-    """
-
-    x_data = feature_data.iloc[:, :-5].values
-    y_data = feature_data.iloc[:, -1].values
-
-    mae_scores = []
-    rmse_scores = []
-    corr_scores = []
-    model_predictions = []
-    y_tests = []
-
-    for i in range(n_iterations):
-        x_train, x_test, y_train, y_test = train_test_split(x_data, y_data, test_size=0.25, random_state=i)
-        x_train, x_val, y_train, y_val = train_test_split(x_train, y_train, test_size=0.25, random_state=i)
-        
-        method, num_features = select_best_feature_selection_method(
-            feature, feature_data, x_train, x_val, y_train, y_val, 
-            methods=['importance', 'pca', 'mrmr', 'shap'], model=model, predefined_split=False, refit=True)
-
-        mae, rmse, corr, pred = performance_on_selected_features(feature_data, x_train, x_val, x_test, y_train, y_val, y_test, 
-method, num_features, model=model, predefined_split=False, refit=True)
-        
-        mae_scores.append(mae)
-        rmse_scores.append(rmse)
-        corr_scores.append(corr)
-        model_predictions.append(pred)
-        y_tests.append(y_test)
-
-    results = {
-        "MAE": {"mean": np.mean(mae_scores), "std": np.std(mae_scores)},
-        "RMSE": {"mean": np.mean(rmse_scores), "std": np.std(rmse_scores)},
-        "Correlation": {"mean": np.mean(corr_scores), "std": np.std(corr_scores)},
-    }
-
-    print(f'MAE: {results["MAE"]["mean"]:.4f} ± {results["MAE"]["std"]:.4f}')
-    print(f'RMSE: {results["RMSE"]["mean"]:.4f} ± {results["RMSE"]["std"]:.4f}')
-    print(f'Correlation: {results["Correlation"]["mean"]:.4f} ± {results["Correlation"]["std"]:.4f}')
-    
-    return model_predictions, y_tests
-
-def independent_split_evaluation(feature_data, feature, initial_train_hives, initial_val_hives, initial_test_hives, n_iterations=10, model='random forest'):
-    """
-    Evaluate the performance of a model using independent splits of the dataset.
-
-    Parameters:
-    - feature_data (DataFrame): DataFrame containing the feature data.
-    - feature (str): Name of the feature being evaluated.
-    - initial_train_hives (list): List of initial training hives.
-    - initial_val_hives (list): List of initial validation hives.
-    - initial_test_hives (list): List of initial test hives.
-    - n_iterations (int): Number of iterations for independent splits.
-    - model (str): Name of the machine learning model to use.
-
-    Returns:
-    - Tuple: A tuple containing the model predictions and true labels for each iteration.
-
-    This function performs independent splits of the dataset into training, validation, and test sets. It then selects the best feature selection method and evaluates the performance of the selected features using the specified machine learning model. This process is repeated for the specified number of iterations.
-
-    """
-
-    mae_scores = []
-    rmse_scores = []
-    corr_scores = []
-    model_predictions = []
-    y_tests=[]
-
-    all_hives = initial_train_hives + initial_val_hives + initial_test_hives
-    np.random.seed(0)
-
-    for i in range(n_iterations):
-        
-        np.random.shuffle(all_hives)
-        train_hives = all_hives[:5]
-        val_hives = all_hives[5:7]
-        test_hives = all_hives[7:9]
-        
-        print("="*40)
-        print(f"Train hives: {train_hives}")
-        print("-"*40)
-        print(f"Validation hives: {val_hives}")
-        print("-"*40)
-        print(f"Test hives: {test_hives}")
-        print("="*40)
-
-        x_train, y_train, x_val, y_val, x_test, y_test = get_splits(feature_data, train_hives, val_hives, test_hives)
-        
-        method, num_features = select_best_feature_selection_method(
-            feature, feature_data, x_train, x_val, y_train, y_val, 
-            methods=['importance', 'pca', 'mrmr', 'shap'], model=model, predefined_split=True, refit=True)
-
-        mae, rmse, corr, pred = performance_on_selected_features(
-            feature_data, x_train, x_val, x_test, y_train, y_val, y_test, 
-            method, num_features, model=model, predefined_split=True, refit=True)
-        
-        mae_scores.append(mae)
-        rmse_scores.append(rmse)
-        corr_scores.append(corr)
-        model_predictions.append(pred)
-        y_tests.append(y_test)
-
-    results = {
-        "MAE": {"mean": np.mean(mae_scores), "std": np.std(mae_scores)},
-        "RMSE": {"mean": np.mean(rmse_scores), "std": np.std(rmse_scores)},
-        "Correlation": {"mean": np.mean(corr_scores), "std": np.std(corr_scores)},
-    }
-
-    print(f'MAE: {results["MAE"]["mean"]:.4f} ± {results["MAE"]["std"]:.4f}')
-    print(f'RMSE: {results["RMSE"]["mean"]:.4f} ± {results["RMSE"]["std"]:.4f}')
-    print(f'Correlation: {results["Correlation"]["mean"]:.4f} ± {results["Correlation"]["std"]:.4f}')
-    
-    return model_predictions, y_tests
-
-
+    return np.array(temp).flatten()
 
 
 def score_mae_box(y_true, y_pred):
@@ -729,6 +100,7 @@ def score_mae_box(y_true, y_pred):
         temp.append(np.clip(y_pred[i], (10 * y_box) - 10, 10 * y_box))
         
     mae_box = mean_absolute_error(y_true, np.array(temp)) 
+    
     return mae_box 
 
 mae_box_scorer = make_scorer(score_mae_box, greater_is_better=False)
@@ -786,61 +158,65 @@ def score_corr_box(y_true, y_pred):
     
     return corr_box 
 
-def random_baseline_metrics(y_tests, n_iterations=10, random_range=(0, 31)):
+def score_r2_box(y_true, y_pred):
     """
-    Generate random baseline predictions and calculate performance metrics.
+    Calculate the correlation coefficient considering box constraints.
 
-    Parameters:
-    - y_tests: List of arrays containing actual values of the target variable for each iteration.
-    - n_iterations: Number of iterations for generating random predictions.
-    - random_range: Tuple specifying the range for random predictions.
+    Args:
+    - y_true (ndarray): True target labels.
+    - y_pred (ndarray): Predicted target labels.
 
     Returns:
-    - List of lists containing random predictions for each iteration.
+    - r2_box (float): R squared.
     """
-    all_mae_scores = []
-    all_rmse_scores = []
-    all_corr_scores = []
-    all_predicted_lists = []
+    temp = []
+    
+    for i in range(len(y_true)):
+        if 0 < y_true[i] <= 10:
+            y_box = 1
+        elif 10 < y_true[i] <= 20:
+            y_box = 2
+        elif 20 < y_true[i] <= 30:
+            y_box = 3
+        temp.append(np.clip(y_pred[i], 10 * y_box - 10, 10 * y_box))
+        
+    r2_box = r2_score(np.array(y_true).flatten(), np.array(temp).flatten())
+    
+    return r2_box 
 
-    np.random.seed(0)  # Set a random seed for reproducibility
-
-    for y_test in y_tests:
-        mae_scores = []
-        rmse_scores = []
-        corr_scores = []
-        predicted_list = []
-
-        for _ in range(n_iterations):
-            predicted = np.random.uniform(random_range[0], random_range[1], len(y_test))
-            mae_scores.append(score_mae_box(y_test, predicted))
-            rmse_scores.append(score_rmse_box(y_test, predicted))
-            corr_scores.append(score_corr_box(y_test, predicted))
-            predicted_list.append(predicted)
-
-        # Collect the predictions and metrics for this y_test
-        all_mae_scores.append(mae_scores)
-        all_rmse_scores.append(rmse_scores)
-        all_corr_scores.append(corr_scores)
-        all_predicted_lists.append(np.mean(predicted_list, axis=0))
-
-    # Calculate average and standard deviation across all iterations
-    mae_avg = np.mean([np.mean(scores) for scores in all_mae_scores])
-    mae_std = np.mean([np.std(scores) for scores in all_mae_scores])
-    rmse_avg = np.mean([np.mean(scores) for scores in all_rmse_scores])
-    rmse_std = np.mean([np.std(scores) for scores in all_rmse_scores])
-    corr_avg = np.mean([np.mean(scores) for scores in all_corr_scores])
-    corr_std = np.mean([np.std(scores) for scores in all_corr_scores])
-
-    #print(f'MAE: {mae_avg:.4f} ± {mae_std:.4f}')
-    #print(f'RMSE: {rmse_avg:.4f} ± {rmse_std:.4f}')
-    #print(f'Correlation: {corr_avg:.4f} ± {corr_std:.4f}')
-
-    return all_predicted_lists
+def mean_absolute_percentage_error(y_true, y_pred): 
+    y_true, y_pred = np.array(y_true), np.array(y_pred)
+    return np.mean(np.abs((y_true - y_pred) / y_true)) * 100
 
 
+def score_mape_box(y_true, y_pred):
+    """
+    Calculate the correlation coefficient considering box constraints.
 
-def evaluate_model_performance(y_tests, random_predictions, model_predictions):
+    Args:
+    - y_true (ndarray): True target labels.
+    - y_pred (ndarray): Predicted target labels.
+
+    Returns:
+    - mape_box (float): MAPE.
+    """
+    temp = []
+    
+    for i in range(len(y_true)):
+        if 0 < y_true[i] <= 10:
+            y_box = 1
+        elif 10 < y_true[i] <= 20:
+            y_box = 2
+        elif 20 < y_true[i] <= 30:
+            y_box = 3
+        temp.append(np.clip(y_pred[i], 10 * y_box - 10, 10 * y_box))
+        
+    mape_box = mean_absolute_percentage_error(np.array(y_true).flatten(), np.array(temp).flatten())
+    
+    return mape_box
+
+
+def evaluate_model_performance(y_tests, random_predictions, model_predictions, clipped=True):
     """
     Evaluate model performance by comparing it with a random baseline using paired t-tests.
 
@@ -852,30 +228,53 @@ def evaluate_model_performance(y_tests, random_predictions, model_predictions):
     Returns:
     - Dictionary containing t-statistics, p-values, and mean ± std for MAE, RMSE, and correlation.
     """
+   
+    if clipped:
+    # Clip predictions based on boxes
+        random_predictions = [
+            clip_based_on_boxes(y_test, random_pred) 
+            for y_test, random_pred in zip(y_tests, random_predictions)
+        ]
+        model_predictions = [
+            clip_based_on_boxes(y_test, model_pred) 
+            for y_test, model_pred in zip(y_tests, model_predictions)
+        ]
+        
+    # Calculate metrics for random predictions
+    random_maes = [round(mean_absolute_error(y_test, random_pred), 2) for y_test, random_pred in zip(y_tests, random_predictions)]
+    random_rmses = [round(mean_squared_error(y_test, random_pred, squared=False), 2) for y_test, random_pred in zip(y_tests, random_predictions)]
+    random_corrs = [round(pearsonr(y_test, random_pred)[0], 2) for y_test, random_pred in zip(y_tests, random_predictions)]
+    random_r2 = [round(r2_score(y_test, random_pred), 2) for y_test, random_pred in zip(y_tests, random_predictions)]
+    random_mape = [round(mean_absolute_percentage_error(y_test, random_pred), 2) for y_test, random_pred in zip(y_tests, random_predictions)]
 
-    # Calculate metrics for the random baseline
-    random_maes = [score_mae_box(y_test, random_pred) for y_test, random_pred in zip(y_tests, random_predictions)]
-    random_rmses = [score_rmse_box(y_test, random_pred) for y_test, random_pred in zip(y_tests, random_predictions)]
-    random_corrs = [score_corr_box(y_test, random_pred) for y_test, random_pred in zip(y_tests, random_predictions)]
-    
     # Calculate metrics for the model
-    model_maes = [score_mae_box(y_test, model_pred) for y_test, model_pred in zip(y_tests, model_predictions)]
-    model_rmses = [score_rmse_box(y_test, model_pred) for y_test, model_pred in zip(y_tests, model_predictions)]
-    model_corrs = [score_corr_box(y_test, model_pred) for y_test, model_pred in zip(y_tests, model_predictions)]
+    model_maes = [round(mean_absolute_error(y_test, model_pred), 2) for y_test, model_pred in zip(y_tests, model_predictions)]
+    model_rmses = [round(mean_squared_error(y_test, model_pred, squared=False), 2) for y_test, model_pred in zip(y_tests, model_predictions)]
+    model_corrs = [round(pearsonr(y_test, model_pred)[0], 2) for y_test, model_pred in zip(y_tests, model_predictions)]
+    model_r2 = [round(r2_score(y_test, model_pred), 2) for y_test, model_pred in zip(y_tests, model_predictions)]
+    model_mape = [round(mean_absolute_percentage_error(y_test, model_pred), 2) for y_test, model_pred in zip(y_tests, model_predictions)]
 
+    
+    #stat, p_value = wilcoxon(model_maes, random_maes, alternative='two-sided')
     # Paired t-test
     t_stat_mae, p_value_mae = ttest_rel(model_maes, random_maes)
     t_stat_rmse, p_value_rmse = ttest_rel(model_rmses, random_rmses)
     t_stat_corr, p_value_corr = ttest_rel(model_corrs, random_corrs)
+    t_stat_r2, p_value_r2 = ttest_rel(model_r2, random_r2)
+    t_stat_mape, p_value_mape = ttest_rel(model_mape, random_mape)
 
     # Print results
     print(f"Random Forest MAE: {np.mean(model_maes)} ± {np.std(model_maes)}, Random Regressor MAE: {np.mean(random_maes)} ± {np.std(random_maes)}")
     print(f"Random Forest RMSE: {np.mean(model_rmses)} ± {np.std(model_rmses)}, Random Regressor RMSE: {np.mean(random_rmses)} ± {np.std(random_rmses)}")
     print(f"Random Forest Corr: {np.mean(model_corrs)} ± {np.std(model_corrs)}, Random Regressor Corr: {np.mean(random_corrs)} ± {np.std(random_corrs)}")
+    print(f"Random Forest R2: {np.mean(model_r2)} ± {np.std(model_r2)}, Random Regressor R2: {np.mean(random_r2)} ± {np.std(random_r2)}")
+    print(f"Random Forest MAPE: {np.mean(model_mape)} ± {np.std(model_mape)}, Random Regressor R2: {np.mean(random_mape)} ± {np.std(random_mape)}")
 
     print(f"MAE t-statistic: {t_stat_mae}, p-value: {p_value_mae}")
     print(f"RMSE t-statistic: {t_stat_rmse}, p-value: {p_value_rmse}")
     print(f"Correlation t-statistic: {t_stat_corr}, p-value: {p_value_corr}")
+    print(f"R2 t-statistic: {t_stat_r2}, p-value: {p_value_r2}")
+    print(f"MAPE t-statistic: {t_stat_mape}, p-value: {p_value_mape}")
 
     # Interpretation
     if p_value_mae < 0.05:
@@ -892,12 +291,653 @@ def evaluate_model_performance(y_tests, random_predictions, model_predictions):
         print("The improvement in Correlation is statistically significant.")
     else:
         print("The improvement in Correlation is not statistically significant.")
+        
+    if p_value_r2 < 0.05:
+        print("The improvement in R squared is statistically significant.")
+    else:
+        print("The improvement in R squared is not statistically significant.")
+        
+    if p_value_mape < 0.05:
+        print("The improvement in MAPE is statistically significant.")
+    else:
+        print("The improvement in MAPE is not statistically significant.")
 
     # Return results as a dictionary
     return {
         "MAE": {"t-statistic": t_stat_mae, "p-value": p_value_mae, "mean_model": np.mean(model_maes), "std_model": np.std(model_maes), "mean_random": np.mean(random_maes), "std_random": np.std(random_maes)},
         "RMSE": {"t-statistic": t_stat_rmse, "p-value": p_value_rmse, "mean_model": np.mean(model_rmses), "std_model": np.std(model_rmses), "mean_random": np.mean(random_rmses), "std_random": np.std(random_rmses)},
         "Correlation": {"t-statistic": t_stat_corr, "p-value": p_value_corr, "mean_model": np.mean(model_corrs), "std_model": np.std(model_corrs), "mean_random": np.mean(random_corrs), "std_random": np.std(random_corrs)},
+        "R2": {"t-statistic": t_stat_r2, "p-value": p_value_r2, "mean_model": np.mean(model_r2), "std_model": np.std(model_r2), "mean_random": np.mean(random_r2), "std_random": np.std(random_r2)},
+        "MAPE": {"t-statistic": t_stat_mape, "p-value": p_value_mape, "mean_model": np.mean(model_mape), "std_model": np.std(model_mape), "mean_random": np.mean(random_mape), "std_random": np.std(random_mape)},
     }
 
 
+def ml_gridsearchcv_kfold(model, cv, refit=False):
+    
+    """
+    Perform grid search cross-validation to tune hyperparameters of a machine learning model.
+
+    Parameters:
+    - model (str): Name of the machine learning model.
+    - predefined_split (bool): Whether to use predefined splits for cross-validation.
+    - split_index (list): List of indices indicating the fold to which each sample belongs if predefined_split is True.
+    - refit (bool): Whether to refit the best estimator using all available data.
+
+    Returns:
+    - GridSearchCV: Grid search cross-validation object.
+
+    This function performs grid search cross-validation to tune hyperparameters of a specified machine learning model. It supports various models including Support Vector Regression (SVR), Lasso, Ridge, K-Nearest Neighbors (KNN), Random Forest, and Decision Tree. The grid of hyperparameters to search over is predefined for each model. If predefined_split is True, the function uses predefined splits for cross-validation, otherwise, it uses standard k-fold cross-validation.
+
+    """
+
+    score = mae_box_scorer #mae_box_scorer #'neg_mean_absolute_error' #  #'r2' #'neg_mean_absolute_error' #neg_mean_squared_error'
+    
+    if model == 'svr':
+        param_grid = {'C': [0.1, 1, 10], 
+              'gamma': [1, 0.1, 10],
+              'kernel': ['rbf','linear']}
+        
+        grid = GridSearchCV(SVR(), param_grid, refit=refit, verbose=0, scoring=score,
+                                cv=cv)
+        
+    elif model == 'lasso':
+        param_grid = {'alpha': np.logspace(-4, -0.5, 30)} 
+        
+        grid = GridSearchCV(Lasso(random_state=0, max_iter=10000), param_grid, refit=refit, verbose=0,
+                                scoring=score, cv=cv)
+        
+    elif model == 'ridge':
+        param_grid = {'alpha': np.logspace(-4, -0.5, 30)} 
+        grid = GridSearchCV(Ridge(random_state=0, max_iter=10000), param_grid, refit=refit, verbose=0,
+                                scoring=score, cv=cv)
+        
+    elif model == 'knn':
+        param_grid = {'n_neighbors': np.arange(1, 10)} 
+        grid = GridSearchCV(KNeighborsRegressor(), param_grid, refit=refit, verbose=0, scoring=score,
+                                cv=cv)
+        
+    elif model == 'random forest':
+        
+        param_grid = {'n_estimators': np.arange(100, 200, 50),
+               'max_features': ['auto', 'sqrt'],
+               'max_depth': np.arange(10, 30, 10),
+               'min_samples_split': [2, 5, 10],
+               'min_samples_leaf': [1, 2, 4],
+               'bootstrap': [True, False]}
+        """
+        param_grid = {
+                'n_estimators': np.arange(100, 1000, 100),
+                'max_features': [0.1, 0.5, 'auto', 'sqrt'],
+                'max_depth': np.arange(10, 100, 10),
+                'min_samples_split': [2, 5, 10, 20],
+                'min_samples_leaf': [1, 2, 4, 10],
+                'bootstrap': [True, False]
+            }
+        
+        """
+        grid = GridSearchCV(RandomForestRegressor(random_state=0), param_grid, refit=refit, verbose=0, 
+                            scoring=score, cv=cv)
+        """
+        n_iter_search = 100  # Adjust this based on how exhaustive you want the search to be
+
+        grid = RandomizedSearchCV(
+            RandomForestRegressor(random_state=0),
+            param_distributions=param_grid,
+            n_iter=n_iter_search,
+            random_state=42,  # Ensures reproducibility
+            refit=refit,
+            verbose=0,
+            scoring=score,
+            cv=cv
+        )
+        """
+    
+    
+    elif model == 'tree':
+        param_grid = {"min_samples_split": [2, 5, 10],
+                       "min_samples_leaf": [1, 2, 4]
+                     }
+        grid = GridSearchCV(DecisionTreeRegressor(random_state=1), param_grid, refit=refit, verbose=0,
+                            scoring=score, cv=cv)
+        
+    return grid
+
+
+def random_split_cv(feature_data, selected_columns=[], n_splits=5, model='random forest'):
+    """
+    Perform 5-fold nested cross-validation for model evaluation.
+
+    Parameters:
+    - feature_data (DataFrame): DataFrame containing the feature data.
+    - feature (str): Name of the feature being evaluated.
+    - method (str): Feature selection method (not used directly here but can be integrated).
+    - num_features (int): Number of features to select.
+    - n_splits (int): Number of folds for cross-validation.
+    - model (str): Machine learning model to use.
+
+    Returns:
+    - Tuple: Model predictions, true labels, and performance metrics.
+    """
+    x_data = feature_data.loc[:, selected_columns].values
+    y_data = feature_data.iloc[:,1].values
+
+    outer_cv = KFold(n_splits=n_splits, shuffle=True, random_state=42)
+   
+    mae_scores = []
+    rmse_scores = []
+    corr_scores = []
+    r2_scores = []
+    mape_scores = []
+    
+    
+    mae_scores_clipped = []
+    rmse_scores_clipped = []
+    corr_scores_clipped = []
+    r2_scores_clipped = []
+    mape_scores_clipped = []
+    
+    model_predictions = []
+    y_tests = []
+
+    for split_num, (outer_train_idx, outer_test_idx) in enumerate(outer_cv.split(x_data), start=1):
+        
+        print(f"\n### Outer Fold {split_num} ###")
+        # Outer loop: train-test split
+        x_train, x_test = x_data[outer_train_idx], x_data[outer_test_idx]
+        y_train, y_test = y_data[outer_train_idx], y_data[outer_test_idx]
+        
+        """
+        if len(x_train.shape) == 1:
+            x_train = x_train.reshape(-1, 1)
+    
+        """
+        inner_cv = KFold(n_splits=n_splits, shuffle=True, random_state=42)
+
+        # Inner loop: GridSearchCV with cross-validation
+        grid = ml_gridsearchcv_kfold(model, cv=inner_cv, refit=True)
+        
+        
+        grid.fit(x_train, y_train)
+
+        # Best model evaluation on the outer test set
+        best_model = grid.best_estimator_
+        predictions = best_model.predict(x_test)
+        
+        model_predictions.append(predictions)
+        y_tests.append(y_test)
+
+        clipped_pred = clip_based_on_boxes(y_test, predictions)
+        
+        mae, rmse, corr, r2, mape = calc_all_metrics(y_test, predictions)    
+        print(f"Outer Fold Results: MAE={mae:.4f}, RMSE={rmse:.4f}, Correlation={corr:.4f}, R squared={r2:.4f}, MAPE={mape:.4f}")
+        
+        mae_scores.append(mae)
+        rmse_scores.append(rmse)
+        corr_scores.append(corr)
+        r2_scores.append(r2)
+        mape_scores.append(mape)
+        
+
+        mae, rmse, corr, r2, mape = calc_all_metrics(y_test, clipped_pred)    
+        print(f"Outer Fold Results Clipped: MAE={mae:.4f}, RMSE={rmse:.4f}, Correlation={corr:.4f}, R squared={r2:.4f}, MAPE={mape:.4f}")
+        
+        
+        mae_scores_clipped.append(mae)
+        rmse_scores_clipped.append(rmse)
+        corr_scores_clipped.append(corr)
+        r2_scores_clipped.append(r2)
+        mape_scores_clipped.append(mape)
+
+    # Summary of results
+    results = {
+        "test_mae": {"mean": np.mean(mae_scores), "std": np.std(mae_scores)},
+        "test_rmse": {"mean": np.mean(rmse_scores), "std": np.std(rmse_scores)},
+        "test_corr": {"mean": np.mean(corr_scores), "std": np.std(corr_scores)},
+        "test_r2": {"mean": np.mean(r2_scores), "std": np.std(r2_scores)},
+        "test_mape": {"mean": np.mean(mape_scores), "std": np.std(mape_scores)},
+    }
+    
+    
+    
+    results_clipped = {
+        "test_mae": {"mean": np.mean(mae_scores_clipped), "std": np.std(mae_scores_clipped)},
+        "test_rmse": {"mean": np.mean(rmse_scores_clipped), "std": np.std(rmse_scores_clipped)},
+        "test_corr": {"mean": np.mean(corr_scores_clipped), "std": np.std(corr_scores_clipped)},
+        "test_r2": {"mean": np.mean(r2_scores_clipped), "std": np.std(r2_scores_clipped)},
+        "test_mape": {"mean": np.mean(mape_scores_clipped), "std": np.std(mape_scores_clipped)},
+    }
+
+    print("\nFinal Results Across Outer Folds:")
+    print(f'MAE: {results["test_mae"]["mean"]:.4f} ± {results["test_mae"]["std"]:.4f}')
+    print(f'RMSE: {results["test_rmse"]["mean"]:.4f} ± {results["test_rmse"]["std"]:.4f}')
+    print(f'Correlation: {results["test_corr"]["mean"]:.4f} ± {results["test_corr"]["std"]:.4f}')
+    print(f'R squared: {results["test_r2"]["mean"]:.4f} ± {results["test_r2"]["std"]:.4f}')
+    print(f'MAPE: {results["test_mape"]["mean"]:.4f} ± {results["test_mape"]["std"]:.4f}')
+    
+    
+    
+    print("\nFinal Results Clipped Across Outer Folds:")
+    print(f'MAE: {results_clipped["test_mae"]["mean"]:.4f} ± {results_clipped["test_mae"]["std"]:.4f}')
+    print(f'RMSE: {results_clipped["test_rmse"]["mean"]:.4f} ± {results_clipped["test_rmse"]["std"]:.4f}')
+    print(f'Correlation: {results_clipped["test_corr"]["mean"]:.4f} ± {results_clipped["test_corr"]["std"]:.4f}')
+    print(f'R squared: {results_clipped["test_r2"]["mean"]:.4f} ± {results_clipped["test_r2"]["std"]:.4f}')
+    print(f'MAPE: {results_clipped["test_mape"]["mean"]:.4f} ± {results_clipped["test_mape"]["std"]:.4f}')
+    
+    
+
+    return model_predictions, y_tests, results, results_clipped
+
+
+def hive_independent_cv(feature_data, selected_columns=[], model='random forest', n_outer_folds=5, n_inner_folds=5, random_regressor=False, min_fob=1, max_fob=30, balance_data=False, normalize=False):
+    """
+    Perform nested cross-validation using GroupKFold for both the outer and inner loops.
+
+    Parameters:
+    - feature_data (DataFrame): DataFrame containing the feature data and a 'tag' column for hive IDs.
+    - selected_columns (list): List of feature column names to use.
+    - model (str): Machine learning model to use.
+    - n_outer_folds (int): Number of folds for the outer cross-validation loop.
+    - n_inner_folds (int): Number of folds for the inner cross-validation loop.
+    - balance_data (bool): Whether to balance training data during cross-validation.
+
+    Returns:
+    - Tuple: Model predictions, true labels, and performance metrics.
+    """
+    mae_scores = []
+    rmse_scores = []
+    corr_scores = []
+    r2_scores = []
+    mape_scores = []
+
+    
+    mae_scores_clipped = []
+    rmse_scores_clipped = []
+    corr_scores_clipped = []
+    r2_scores_clipped = []
+    mape_scores_clipped = []
+    
+    
+    model_predictions = []
+    y_tests = []
+    
+    hive_results = {}
+
+    # Outer CV: Hive-independent GroupKFold
+    outer_cv = GroupKFold(n_splits=n_outer_folds)
+    groups = feature_data['tag'].values  # Hive IDs
+    
+    x_data = feature_data.loc[:, selected_columns].values
+    y_data = feature_data.iloc[:, 1].values
+
+    for train_val_idx, test_idx in outer_cv.split(x_data, y_data, groups):
+        # Split into training-validation and test sets
+        x_train_val, x_test = x_data[train_val_idx], x_data[test_idx]
+        y_train_val, y_test = y_data[train_val_idx], y_data[test_idx]
+        test_hive_ids = np.unique(groups[test_idx])  # Test hive IDs
+
+        print(f"Outer Loop - Test Hives: {test_hive_ids}")
+
+        # Balancing training-validation data if enabled
+        if balance_data:
+            inner_groups = groups[train_val_idx]
+            x_train_val, y_train_val, inner_groups = balance_training_data(
+                x_train_val, y_train_val, inner_groups, n_bins=10
+            )
+        else:
+            inner_groups = groups[train_val_idx]
+            
+            
+        if normalize:
+        
+            scaler = MinMaxScaler()
+            # Fit the scaler on x_train and transform
+            x_train_val = scaler.fit_transform(x_train_val)
+            x_test = scaler.fit_transform(x_test)
+        
+        if random_regressor:
+            y_train_val = create_random_array(y_train_val, seed=0, min_fob=min_fob, max_fob=max_fob)
+            
+        # Inner CV: Hive-independent GroupKFold
+        inner_cv = GroupKFold(n_splits=n_inner_folds)
+        inner_folds = []
+        for train_idx, val_idx in inner_cv.split(x_train_val, y_train_val, inner_groups):
+            inner_folds.append((train_idx, val_idx))
+
+        
+        #inner_folds = KFold(n_splits=5, shuffle=True, random_state=42)
+        
+        
+        # Perform hyperparameter tuning using inner folds
+        grid = ml_gridsearchcv_kfold(model, cv=inner_folds, refit=True)
+        grid.fit(x_train_val, y_train_val)
+
+        # Best model evaluation on the outer test set
+        best_model = grid.best_estimator_
+        predictions = best_model.predict(x_test)
+        
+        model_predictions.append(predictions)
+        y_tests.append(y_test)
+        
+        # Save predictions and true labels by hive ID
+        for hive_id in test_hive_ids:
+            hive_indices = np.where(groups[test_idx] == hive_id)
+            hive_results[hive_id] = (y_test[hive_indices], predictions[hive_indices])
+
+
+        clipped_pred = clip_based_on_boxes(y_test, predictions)
+        
+        mae, rmse, corr, r2, mape = calc_all_metrics(y_test, predictions)    
+        print(f"Outer Fold Results: MAE={mae:.4f}, RMSE={rmse:.4f}, Correlation={corr:.4f}, R squared={r2:.4f}, MAPE={mape:.4f}")
+        
+        mae_scores.append(mae)
+        rmse_scores.append(rmse)
+        corr_scores.append(corr)
+        r2_scores.append(r2)
+        mape_scores.append(mape)
+        
+
+        mae, rmse, corr, r2, mape = calc_all_metrics(y_test, clipped_pred)    
+        print(f"Outer Fold Results Clipped: MAE={mae:.4f}, RMSE={rmse:.4f}, Correlation={corr:.4f}, R squared={r2:.4f}, MAPE={mape:.4f}")
+        
+        
+        mae_scores_clipped.append(mae)
+        rmse_scores_clipped.append(rmse)
+        corr_scores_clipped.append(corr)
+        r2_scores_clipped.append(r2)
+        mape_scores_clipped.append(mape)
+
+    # Summary of results
+    results = {
+        "test_mae": {"mean": np.mean(mae_scores), "std": np.std(mae_scores)},
+        "test_rmse": {"mean": np.mean(rmse_scores), "std": np.std(rmse_scores)},
+        "test_corr": {"mean": np.mean(corr_scores), "std": np.std(corr_scores)},
+        "test_r2": {"mean": np.mean(r2_scores), "std": np.std(r2_scores)},
+        "test_mape": {"mean": np.mean(mape_scores), "std": np.std(mape_scores)},
+    }
+    
+    
+    
+    results_clipped = {
+        "test_mae": {"mean": np.mean(mae_scores_clipped), "std": np.std(mae_scores_clipped)},
+        "test_rmse": {"mean": np.mean(rmse_scores_clipped), "std": np.std(rmse_scores_clipped)},
+        "test_corr": {"mean": np.mean(corr_scores_clipped), "std": np.std(corr_scores_clipped)},
+        "test_r2": {"mean": np.mean(r2_scores_clipped), "std": np.std(r2_scores_clipped)},
+        "test_mape": {"mean": np.mean(mape_scores_clipped), "std": np.std(mape_scores_clipped)},
+    }
+
+    print("\nFinal Results Across Outer Folds:")
+    print(f'MAE: {results["test_mae"]["mean"]:.4f} ± {results["test_mae"]["std"]:.4f}')
+    print(f'RMSE: {results["test_rmse"]["mean"]:.4f} ± {results["test_rmse"]["std"]:.4f}')
+    print(f'Correlation: {results["test_corr"]["mean"]:.4f} ± {results["test_corr"]["std"]:.4f}')
+    print(f'R squared: {results["test_r2"]["mean"]:.4f} ± {results["test_r2"]["std"]:.4f}')
+    print(f'MAPE: {results["test_mape"]["mean"]:.4f} ± {results["test_mape"]["std"]:.4f}')
+    
+    
+    
+    print("\nFinal Results Clipped Across Outer Folds:")
+    print(f'MAE: {results_clipped["test_mae"]["mean"]:.4f} ± {results_clipped["test_mae"]["std"]:.4f}')
+    print(f'RMSE: {results_clipped["test_rmse"]["mean"]:.4f} ± {results_clipped["test_rmse"]["std"]:.4f}')
+    print(f'Correlation: {results_clipped["test_corr"]["mean"]:.4f} ± {results_clipped["test_corr"]["std"]:.4f}')
+    print(f'R squared: {results_clipped["test_r2"]["mean"]:.4f} ± {results_clipped["test_r2"]["std"]:.4f}')
+    print(f'MAPE: {results_clipped["test_mape"]["mean"]:.4f} ± {results_clipped["test_mape"]["std"]:.4f}')
+
+    return model_predictions, y_tests, results, results_clipped, hive_results
+
+def calc_all_metrics(y_true, y_pred):
+    
+    mae = mean_absolute_error(y_true, y_pred) 
+    rmse = mean_squared_error(y_true, y_pred, squared=False)
+    corr = pearsonr(y_true, y_pred)[0] 
+    r2 = r2_score(y_true, y_pred)
+    mape = mean_absolute_percentage_error(y_true, y_pred)
+    return mae, rmse, corr, r2, mape
+    
+def features_selection_cv(feature, feature_data, selected_columns, n_splits, method, split, model, preprocessing):    
+    # Extract x_data and y_data
+    x_data = feature_data.loc[:, selected_columns].values
+    y_data = feature_data.iloc[:, 1].values  # Target
+
+    
+    outer_cv = KFold(n_splits=5, shuffle=True, random_state=42)
+
+    splits = list(outer_cv.split(x_data))  # Convert the generator to a list
+    first_split = splits[0]  # Access the first split
+
+    # Unpack train and test indices
+    outer_train_idx, outer_test_idx = first_split
+    # Use the indices to create training and testing sets
+    x_train = x_data[outer_train_idx]  # Training features
+    y_train = y_data[outer_train_idx]  # Training labels
+    
+    
+    
+    
+    ranking_filename = f"{feature}_{method}_feature_ranking_{split}_preprocessing_{preprocessing}.csv"
+
+    # Check if the ranking file already exists
+    if os.path.exists(ranking_filename):
+        
+        print(f"Ranking file found. Loading from {ranking_filename}")
+        ranking_df = pd.read_csv(ranking_filename)
+        feature_ranking_idxs = ranking_df["Feature Index"].values
+        
+    else:
+        
+        print("Ranking file not found. Computing feature rankings...")
+    
+        feature_ranking_idxs = np.zeros(len(selected_columns))
+        
+        # Select features based on the method (mRMR or SHAP)
+        if method == 'mrmr':
+            num_features_to_select = x_data.shape[1]  # Total number of features
+            K_MAX = 5800
+            estimator = depmeas.mi_tau
+            n_jobs = -1
+            feature_ranking_idxs = feature_select.feature_select_optimized(
+                x_train,
+                y_train,
+                num_features_to_select=num_features_to_select,
+                K_MAX=K_MAX,
+                estimator=estimator,
+                n_jobs=n_jobs,
+            )
+
+        elif method == 'shap':
+            # SHAP
+            X100 = shap.utils.sample(x_train.astype(float), 100)  # 100 instances for the background distribution
+            grid = ml_gridsearchcv_kfold(model, cv=None, refit=True)
+            grid.fit(x_train.astype(float), y_train)
+            explainer = shap.Explainer(grid.predict, X100, feature_names=feature_data.iloc[:, 2:].columns)
+            shap_values = explainer(x_train.astype(float), max_evals=12000)
+
+            vals = np.abs(shap_values.values).mean(0)
+            feature_ranking_idxs = np.argsort(vals)[::-1]  # Sort features by SHAP importance
+
+        # Save feature ranking indices to CSV
+        ranking_df = pd.DataFrame({
+            "Rank": range(1, len(feature_ranking_idxs) + 1),
+            "Feature Index": feature_ranking_idxs
+        })
+        ranking_filename = f"{feature}_{method}_feature_ranking_{split}_preprocessing_{preprocessing}.csv"
+        ranking_df.to_csv(ranking_filename, index=False)
+        print(f"Feature rankings saved to {ranking_filename}")
+    
+    mae_scores = []
+    rmse_scores = []
+    corr_scores = []
+    r2_scores = []
+    mape_scores = []
+
+    mae_scores_std = []
+    rmse_scores_std = []
+    corr_scores_std = []
+    r2_scores_std = []
+    mape_scores_std = []
+
+    # Loop through feature selection
+    for i in range(1, min(len(x_data[0]), 30)+1):  # range(1, len(x_data[0]) + 1)# Start from 1 to select at least 1 feature
+        print(f"\n### Number of Features: {i} ###")
+
+        selected_features = feature_data.columns[2:][feature_ranking_idxs[:i]]
+        
+
+        # Run nested CV for the selected features
+        print(f"Running Nested CV for {method} with {i} features...")
+        
+        if split=='random':
+        
+            _, _, _, results = random_split_cv(
+                feature_data,
+                selected_columns=selected_features,
+                n_splits=n_splits,
+                model=model
+            )
+            
+        elif split=='independent':
+            
+           #model_predictions, y_tests, results, results_clipped, hive_results 
+            _, _,_, results, _ = hive_independent_cv(
+               feature_data,
+               selected_columns=selected_features,
+               model=model, n_outer_folds=3, n_inner_folds=2, balance_data=False)
+
+        mae_scores.append(results["test_mae"]["mean"])
+        rmse_scores.append(results["test_rmse"]["mean"])
+        corr_scores.append(results["test_corr"]["mean"])
+        r2_scores.append(results["test_r2"]["mean"])
+        mape_scores.append(results["test_mape"]["mean"])
+
+        # Append the standard deviations
+        mae_scores_std.append(results["test_mae"]["std"])
+        rmse_scores_std.append(results["test_rmse"]["std"])
+        corr_scores_std.append(results["test_corr"]["std"])
+        r2_scores_std.append(results["test_r2"]["std"])
+        mape_scores_std.append(results["test_mape"]["std"])
+
+    # Return all results
+    results = {
+        "mae_scores": {"mean": mae_scores, "std": mae_scores_std},
+        "rmse_scores": {"mean": rmse_scores, "std": rmse_scores_std},
+        "corr_scores": {"mean": corr_scores, "std": corr_scores_std},
+        "r2_scores": {"mean": r2_scores, "std": r2_scores_std},
+        "mape_scores": {"mean": mape_scores, "std": mape_scores_std},
+    }
+    
+    save_results_to_csv(results, method, feature, split, preprocessing)
+
+    return results
+
+def balance_training_data(x_train, y_train, groups, n_bins=10, samples_per_bin=None):
+    """
+    Balance training data for regression by binning continuous target values.
+
+    Parameters:
+    - x_train (np.ndarray): Training features.
+    - y_train (np.ndarray): Training target values.
+    - groups (np.ndarray): Group labels corresponding to training data.
+    - n_bins (int): Number of bins for stratification.
+    - samples_per_bin (int or None): Number of samples per bin. If None, uses the minimum bin size.
+
+    Returns:
+    - Balanced x_train, y_train, and groups.
+    """
+    # Create a DataFrame to handle x, y, and groups together
+    df = pd.DataFrame({'y': y_train, 'group': groups, 'x': list(x_train)})
+    df['bin'] = pd.cut(df['y'], bins=n_bins, labels=False)
+
+    # Determine the number of samples per bin
+    bin_counts = df['bin'].value_counts()
+    min_samples = bin_counts.min() if samples_per_bin is None else samples_per_bin
+
+    # Sample from each bin
+    balanced_df = df.groupby('bin').apply(
+        lambda x: x.sample(min(min_samples, len(x)), random_state=42)
+    ).reset_index(drop=True)
+
+    # Extract balanced x, y, and groups
+    x_balanced = np.vstack(balanced_df['x'].values)
+    y_balanced = balanced_df['y'].values
+    groups_balanced = balanced_df['group'].values
+
+    return x_balanced, y_balanced, groups_balanced
+
+def save_results_to_csv(results, method, feature, split, preprocessing='off'):
+    # Extract values from the results dictionary
+    mae_mean = results["mae_scores"]["mean"]
+    mae_std = results["mae_scores"]["std"]
+    rmse_mean = results["rmse_scores"]["mean"]
+    rmse_std = results["rmse_scores"]["std"]
+    corr_mean = results["corr_scores"]["mean"]
+    corr_std = results["corr_scores"]["std"]
+    r2_mean = results["r2_scores"]["mean"]
+    r2_std = results["r2_scores"]["std"]
+    mape_mean = results["mape_scores"]["mean"]
+    mape_std = results["mape_scores"]["std"]
+
+    # Create a DataFrame to store the results
+    data = {
+        "Number of Features": list(range(1, len(mae_mean) + 1)),  # Assuming equal length for all lists
+        "MAE Mean": mae_mean,
+        "MAE Std": mae_std,
+        "RMSE Mean": rmse_mean,
+        "RMSE Std": rmse_std,
+        "Correlation Mean": corr_mean,
+        "Correlation Std": corr_std,
+        "R2 Mean": r2_mean,
+        "R2 Std": r2_std,
+        "MAPE Mean": mape_mean,
+        "MAPE Std": mape_std
+    }
+
+    df = pd.DataFrame(data)
+
+    # Save to CSV
+    
+    file_name = f"{feature}_{method}_{split}_preprocessing_{preprocessing}.csv"
+    file_name = file_name.replace(" ", "_")  # Replace spaces with underscores
+    
+    df.to_csv(file_name, index=False)
+    
+    
+def read_and_plot_results(method, feature, split, preprocessing='off'):
+    """
+    Reads the CSV file containing results and plots metrics with means and standard deviations.
+
+    Parameters:
+        csv_file (str): Path to the CSV file.
+    """
+    # Read the CSV file
+    file_name = f"{feature}_{method}_{split}_preprocessing_{preprocessing}.csv"
+    df = pd.read_csv(file_name)
+
+    # Extract data
+    num_features = df["Number of Features"]
+    metrics = {
+        "MAE": {"mean": df["MAE Mean"], "std": df["MAE Std"]},
+        "RMSE": {"mean": df["RMSE Mean"], "std": df["RMSE Std"]},
+        "Correlation": {"mean": df["Correlation Mean"], "std": df["Correlation Std"]},
+        "R2": {"mean": df["R2 Mean"], "std": df["R2 Std"]},
+        "MAPE": {"mean": df["MAPE Mean"], "std": df["MAPE Std"]},
+    }
+
+    # Plot
+    plt.figure(figsize=(10, 6))
+    for metric_name, metric_data in metrics.items():
+        mean = metric_data["mean"]
+        std = metric_data["std"]
+
+        # Plot the mean line
+        plt.plot(num_features, mean, label=f"{metric_name} Mean")
+        
+        # Add shaded area for std
+        plt.fill_between(num_features, mean - std, mean + std, alpha=0.2, label=f"{metric_name} ± Std")
+
+    # Plot settings
+    plt.title("Metrics Across Feature Selection")
+    plt.xlabel("Number of Features")
+    plt.ylabel("Score")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+
+    plt.savefig(f'{feature}_{method}_{split}_preprocessing_{preprocessing}_error.png', dpi=400)
