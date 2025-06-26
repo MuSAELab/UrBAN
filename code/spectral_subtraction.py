@@ -50,7 +50,7 @@ def estimate_noise_snr(stft_matrix, snr_threshold=1.5):
     num_frames = 10  # Number of frames to use for estimating a-posteriori SNR
 
     # Compute the squared magnitude for all frames
-    squared_magnitude = np.abs(stft_matrix) ** 2
+    squared_magnitude = np.abs(stft_matrix)
 
     for frame_index in range(stft_matrix.shape[0]):
         if frame_index < num_frames:
