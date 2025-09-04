@@ -21,11 +21,11 @@ Acoustics and PheNotyping Dataset. Available: https://doi.org/10.20383/103.0972
 
 There are two notebooks in this repository. 
 
-1. [main.ipynb](code/main.ipynb)
+1. [main_benchmarks.ipynb](code/main_benchmarks.ipynb)
 2. [data_description_plots_2021_2022.ipynb](code/data_description_plots_2021_2022.ipynb)
 
 
-Details and code related to how feture extraction and regression could be used on the audio dataset is described in [main.ipynb](code/main.ipynb), while [data_description_plots_2021_2022.ipynb](code/data_description_plots_2021_2022.ipynb) contains codes related to how to visualize the datsets.
+Details and code related to how feture extraction and regression could be used on the audio dataset is described in [main_benchmarks.ipynb](code/main_benchmarks.ipynb), while [data_description_plots_2021_2022.ipynb](code/data_description_plots_2021_2022.ipynb) contains codes related to how to visualize the datsets.
 
 
 ## Learn more about the dataset
