@@ -1,4 +1,3 @@
-
 import numpy as np
 import pandas as pd
 
@@ -462,5 +461,4 @@ def extract_statistic(df_all, f_columns, year, start, stop):
     df_features.iloc[:, :4*len(f_columns)] = df_features.iloc[:, :4*len(f_columns)].astype('f') 
 
     return df_features
-
 
