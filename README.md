@@ -26,3 +26,10 @@ There are two notebooks in this repository.
 
 
 Details and code related to how feture extraction and regression could be used on the audio dataset is described in [main.ipynb](code/main.ipynb), while [data_description_plots_2021_2022.ipynb](code/data_description_plots_2021_2022.ipynb) contains codes related to how to visualize the datsets.
+
+
+## Learn more about the dataset
+
+More details on the dataset is available in our paper:
+
+M. Abdollahi, Y. Zhu, H. R. Guimar˜aes, N. Coallier, S. Maucourt, P. Giovenazzo, and T. H. Falk, “Urban: Urban beehive acoustics and phenotyping dataset,” Scientific Data, vol. 12, no. 1, p. 536, 2025.
